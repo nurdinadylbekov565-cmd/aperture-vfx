@@ -2,11 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    background-color: #000000;
-    @apply text-zinc-100 antialiased;
-  }
+/* Используем стандартный CSS для body, чтобы избежать конфликтов при загрузке */
+body {
+  background-color: #000000;
+  color: #f4f4f5; /* Это эквивалент text-zinc-100 */
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
 }
 
 /* Твои анимации */
