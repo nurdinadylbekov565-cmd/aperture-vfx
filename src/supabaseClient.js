@@ -3,28 +3,37 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = 'https://iivlxixcmlrqwdhewbuz.supabase.co'
 const supabaseAnonKey = 'sb_publishable_H_obrhzr2n6zhfq-sQUKKw_Adp37KL7'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Создаем и экспортируем клиент
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  }
+})
 
 // Функция для загрузки видео с привязкой к папке пользователя
 export const uploadVideo = async (file, userId = 'anonymous') => {
+    // 1. Проверка расширения
     const fileExt = file.name.split('.').pop();
-    // Создаем путь: folder/имя_файла для порядка в хранилище
-    const fileName = `${Math.random()}.${fileExt}`;
+    
+    // 2. Создаем уникальный путь: folder/имя_файла
+    const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
     const filePath = `${userId}/${fileName}`;
   
-    // Загружаем файл в бакет 'videos'
-    let { error: uploadError } = await supabase.storage
+    // 3. Загружаем файл в бакет 'videos'
+    let { error: uploadError, data: uploadData } = await supabase.storage
       .from('videos')
       .upload(filePath, file, {
         cacheControl: '3600',
-        upsert: false // Не перезаписывать существующие
+        upsert: false
       });
   
     if (uploadError) {
+      console.error('Upload Error:', uploadError);
       throw uploadError;
     }
   
-    // Получаем публичную ссылку
+    // 4. Получаем публичную ссылку
     const { data } = supabase.storage
       .from('videos')
       .getPublicUrl(filePath);

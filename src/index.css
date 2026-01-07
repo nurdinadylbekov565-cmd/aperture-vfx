@@ -2,14 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Используем стандартный CSS для body, чтобы избежать конфликтов при загрузке */
+/* Используем стандартный CSS для body, чтобы избежать ошибок при загрузке */
 body {
   background-color: #000000;
-  color: #f4f4f5; /* Это эквивалент text-zinc-100 */
+  color: #f4f4f5; /* Аналог text-zinc-100 */
+  margin: 0;
   font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  margin: 0;
 }
 
 /* Твои анимации */
