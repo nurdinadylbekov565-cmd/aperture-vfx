@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Aperture, ShoppingCart, Send, Trash2, Upload, 
   CheckCircle2, Play, Briefcase, Clock, 
-  Zap, Tag, Cpu, LogOut, LayoutDashboard, Menu, X, MessageCircle, DollarSign, ChevronRight, UserCircle, Target
+  Zap, Tag, Cpu, LogOut, LayoutDashboard, Menu, X, MessageCircle, DollarSign, ChevronRight, UserCircle, Target, Inbox
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import CompareSlider from './components/CompareSlider';
@@ -18,12 +18,11 @@ export default function App() {
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   
-  // Состояние роли (по умолчанию эдитор)
   const [userRole, setUserRole] = useState('editor'); 
-
   const [tenders, setTenders] = useState([]); 
   const [brandTenders, setBrandTenders] = useState([]);
   const [applications, setApplications] = useState([]);
+  const [messages, setMessages] = useState([]); 
   const [active, setActive] = useState(null);
 
   const [userWorks, setUserWorks] = useState([]);
@@ -39,7 +38,9 @@ export default function App() {
   const [brandForm, setBrandForm] = useState({ brand_name: '', task_description: '', budget: '', deadline: '' });
   const [applyForm, setApplyForm] = useState({ editor_name: '', message: '' });
 
-  // --- ЛОГИКА ГЛУБОКИХ ССЫЛОК ---
+  // Проверка на наличие непрочитанных сообщений (где пользователь - получатель)
+  const hasUnread = messages.some(m => m.receiver_id === user?.id && !m.is_read);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectId = params.get('p');
@@ -73,7 +74,7 @@ export default function App() {
     if (data) { 
       setProfile(data); 
       setAuthTelegram(data.telegram || '');
-      setUserRole(data.role || 'editor'); // Загружаем роль из БД
+      setUserRole(data.role || 'editor');
     }
   };
 
@@ -87,8 +88,10 @@ export default function App() {
   const fetchData = async () => {
     const { data: works } = await supabase.from('tenders').select('*').order('created_at', { ascending: false });
     if (works) { setTenders(works); if (works.length > 0 && !active) setActive(works[0]); }
+    
     const { data: tasks } = await supabase.from('brand_tenders').select('*').order('created_at', { ascending: false });
     if (tasks) setBrandTenders(tasks);
+    
     const { data: apps } = await supabase.from('tender_applications').select('*').order('created_at', { ascending: false });
     if (apps) setApplications(apps);
 
@@ -97,10 +100,49 @@ export default function App() {
       setUserWorks(uWorks || []);
       const { data: uTenders } = await supabase.from('brand_tenders').select('*').eq('user_id', user.id);
       setUserTenders(uTenders || []);
+      
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: false });
+      setMessages(msgs || []);
     }
   };
 
-  useEffect(() => { fetchData(); }, [user]);
+  useEffect(() => { 
+    fetchData(); 
+    // Настраиваем Realtime подписку для мгновенных уведомлений
+    const channel = supabase.channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchData())
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [user]);
+
+  const sendMessage = async (receiverId, content) => {
+    if (!content.trim() || !user) return;
+    try {
+      const { error } = await supabase.from('messages').insert([
+        { sender_id: user.id, receiver_id: receiverId, content: content.trim(), is_read: false }
+      ]);
+      if (error) throw error;
+      fetchData();
+    } catch (e) { alert("Ошибка отправки"); }
+  };
+
+  // Пометка сообщений как прочитанных при открытии Dashboard
+  useEffect(() => {
+    if (isDashboardOpen && user) {
+      const markAsRead = async () => {
+        await supabase.from('messages')
+          .update({ is_read: true })
+          .eq('receiver_id', user.id)
+          .eq('is_read', false);
+        fetchData();
+      };
+      markAsRead();
+    }
+  }, [isDashboardOpen]);
 
   const handleFileUpload = async (event, type) => {
     try {
@@ -122,6 +164,20 @@ export default function App() {
     else alert("Контакт не указан");
   };
 
+  const handleApplyToTender = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { error: appError } = await supabase.from('tender_applications').insert([
+        { tender_id: selectedTask.id, editor_name: applyForm.editor_name, portfolio_link: profile?.telegram || '', user_id: user.id }
+      ]);
+      if (appError) throw appError;
+      await sendMessage(selectedTask.user_id, `ОТКЛИК НА ТЕНДЕР: ${applyForm.message}`);
+      setIsApplyModalOpen(false);
+      setApplyForm({ editor_name: '', message: '' });
+    } catch (err) { alert("Ошибка при отклике"); } finally { setLoading(false); }
+  };
+
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-blue-600 overflow-x-hidden">
       
@@ -134,9 +190,25 @@ export default function App() {
 
         <div className="flex gap-4 items-center">
           {user ? (
-            <button onClick={() => setIsDashboardOpen(!isDashboardOpen)} className="bg-white text-black px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all flex items-center gap-2 hover:bg-blue-600 hover:text-white">
-              <LayoutDashboard size={14}/> {isDashboardOpen ? 'В Галерею' : 'Моя Студия'}
-            </button>
+            <div className="relative">
+              <button 
+                onClick={() => setIsDashboardOpen(!isDashboardOpen)} 
+                className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all flex items-center gap-2 group relative z-10
+                  ${hasUnread 
+                    ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.5)] border-blue-400' 
+                    : 'bg-white text-black hover:bg-blue-600 hover:text-white'}`}
+              >
+                <LayoutDashboard size={14}/> {isDashboardOpen ? 'В Галерею' : 'Моя Студия'}
+                
+                {/* Красная точка индикатор */}
+                {hasUnread && (
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
+                  </span>
+                )}
+              </button>
+            </div>
           ) : (
             <button onClick={() => setIsAuthModalOpen(true)} className="bg-blue-600 px-8 py-3 rounded-2xl font-black text-[10px] uppercase">Войти</button>
           )}
@@ -146,7 +218,6 @@ export default function App() {
       <main className="max-w-[1600px] mx-auto px-6 py-10">
         
         {isDashboardOpen ? (
-          /* ================= DASHBOARD С РАЗДЕЛЕНИЕМ РОЛЕЙ ================= */
           <div className="space-y-10 animate-in fade-in duration-500">
              
              {/* Переключатель ролей */}
@@ -170,52 +241,83 @@ export default function App() {
                 <button onClick={() => supabase.auth.signOut()} className="text-[9px] font-black uppercase border border-white/10 px-4 py-2 rounded-lg text-zinc-600 hover:text-red-500 transition-colors">Выйти</button>
              </div>
 
-             {userRole === 'editor' ? (
-                /* ИНТЕРФЕЙС ЭДИТОРА */
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                    <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5">
-                        <h3 className="text-xl font-black uppercase italic mb-6 border-l-4 border-blue-600 pl-4">Мои Кейсы</h3>
-                        <button onClick={() => setIsTenderOpen(true)} className="w-full py-10 border-2 border-dashed border-white/5 rounded-[2rem] text-zinc-600 font-black uppercase text-xs hover:border-blue-600 transition-all mb-6">+ Загрузить работу</button>
-                        <div className="space-y-3">
-                            {userWorks.map(w => (
-                                <div key={w.id} className="bg-black/40 p-5 rounded-2xl border border-white/5 flex justify-between items-center">
-                                    <div className="truncate"><div className="text-[9px] text-blue-500 font-bold uppercase">{w.brand_name}</div><div className="font-black italic text-lg">{w.title}</div></div>
-                                    <button onClick={async () => { if(confirm("Удалить работу?")) { await supabase.from('tenders').delete().eq('id', w.id); fetchData(); } }} className="text-zinc-800 hover:text-red-500"><Trash2 size={18}/></button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="bg-zinc-900/20 p-8 rounded-[3rem] border border-white/5 flex items-center justify-center text-center">
-                        <div>
-                          <Zap size={48} className="mx-auto text-zinc-800 mb-4" />
-                          <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Статистика просмотров появится скоро</p>
-                        </div>
-                    </div>
+             <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                {/* ЛЕВАЯ КОЛОНКА */}
+                <div className="lg:col-span-2 space-y-10">
+                  {userRole === 'editor' ? (
+                      <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5">
+                          <h3 className="text-xl font-black uppercase italic mb-6 border-l-4 border-blue-600 pl-4">Мои Кейсы</h3>
+                          <button onClick={() => setIsTenderOpen(true)} className="w-full py-10 border-2 border-dashed border-white/5 rounded-[2rem] text-zinc-600 font-black uppercase text-xs hover:border-blue-600 transition-all mb-6">+ Загрузить работу</button>
+                          <div className="space-y-3">
+                              {userWorks.map(w => (
+                                  <div key={w.id} className="bg-black/40 p-5 rounded-2xl border border-white/5 flex justify-between items-center">
+                                      <div className="truncate"><div className="text-[9px] text-blue-500 font-bold uppercase">{w.brand_name}</div><div className="font-black italic text-lg">{w.title}</div></div>
+                                      <button onClick={async () => { if(confirm("Удалить работу?")) { await supabase.from('tenders').delete().eq('id', w.id); fetchData(); } }} className="text-zinc-800 hover:text-red-500"><Trash2 size={18}/></button>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  ) : (
+                      <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5">
+                          <h3 className="text-xl font-black uppercase italic mb-6 border-l-4 border-red-600 pl-4">Мои Тендеры</h3>
+                          <button onClick={() => setIsBrandModalOpen(true)} className="w-full py-10 border-2 border-dashed border-white/5 rounded-[2rem] text-zinc-600 font-black uppercase text-xs hover:border-red-600 transition-all mb-6">+ Разместить заказ</button>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                              {userTenders.map(t => (
+                                  <div key={t.id} className="bg-black/60 p-6 rounded-3xl border border-white/10">
+                                      <div className="flex justify-between items-center mb-4 text-red-500 font-black italic uppercase tracking-tighter">{t.brand_name} <span>{t.budget}</span></div>
+                                      <p className="text-xs text-zinc-500 mb-4 italic line-clamp-2">"{t.task_description}"</p>
+                                      <div className="space-y-2 pt-4 border-t border-white/5">
+                                          <p className="text-[8px] font-black text-zinc-600 uppercase">Отклики:</p>
+                                          {applications.filter(a => a.tender_id === t.id).map(app => (
+                                              <div key={app.id} className="bg-zinc-900 p-4 rounded-xl flex justify-between items-center">
+                                                  <div className="text-[10px] font-black uppercase">{app.editor_name}</div>
+                                                  <button onClick={() => openTelegram(app.portfolio_link)} className="bg-blue-600 px-3 py-1.5 rounded-lg text-[9px] font-black">TG</button>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
                 </div>
-             ) : (
-                /* ИНТЕРФЕЙС БРЕНДА */
-                <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5">
-                    <h3 className="text-xl font-black uppercase italic mb-6 border-l-4 border-red-600 pl-4">Мои Тендеры</h3>
-                    <button onClick={() => setIsBrandModalOpen(true)} className="w-full py-10 border-2 border-dashed border-white/5 rounded-[2rem] text-zinc-600 font-black uppercase text-xs hover:border-red-600 transition-all mb-6">+ Разместить заказ</button>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {userTenders.map(t => (
-                            <div key={t.id} className="bg-black/60 p-6 rounded-3xl border border-white/10">
-                                <div className="flex justify-between items-center mb-4 text-red-500 font-black italic uppercase tracking-tighter">{t.brand_name} <span>{t.budget}</span></div>
-                                <p className="text-xs text-zinc-500 mb-4 italic line-clamp-2">"{t.task_description}"</p>
-                                <div className="space-y-2 pt-4 border-t border-white/5">
-                                    <p className="text-[8px] font-black text-zinc-600 uppercase">Отклики:</p>
-                                    {applications.filter(a => a.tender_id === t.id).map(app => (
-                                        <div key={app.id} className="bg-zinc-900 p-4 rounded-xl flex justify-between items-center">
-                                            <div className="text-[10px] font-black uppercase">{app.editor_name}</div>
-                                            <button onClick={() => openTelegram(app.portfolio_link)} className="bg-blue-600 px-3 py-1.5 rounded-lg text-[9px] font-black">CHAT</button>
-                                        </div>
-                                    ))}
+
+                {/* ПРАВАЯ КОЛОНКА (Messenger) */}
+                <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5 h-fit">
+                    <h3 className="text-xl font-black uppercase italic mb-6 flex items-center gap-2 border-l-4 border-white pl-4">
+                      <MessageCircle size={18}/> Inbox
+                    </h3>
+                    <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                        {messages.length > 0 ? messages.map(msg => (
+                            <div key={msg.id} className={`p-4 rounded-2xl border ${msg.sender_id === user.id ? 'bg-blue-600/10 border-blue-600/20 ml-6' : 'bg-white/10 border-blue-600/30 mr-6'} ${!msg.is_read && msg.receiver_id === user.id ? 'ring-1 ring-blue-500' : ''}`}>
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">
+                                        {msg.sender_id === user.id ? 'ВЫ' : 'СОБЕСЕДНИК'}
+                                    </span>
+                                    <span className="text-[8px] text-zinc-700">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                 </div>
+                                <p className="text-[11px] leading-relaxed text-zinc-300">{msg.content}</p>
+                                {msg.sender_id !== user.id && (
+                                    <button 
+                                        onClick={() => {
+                                            const reply = prompt("Ваш ответ:");
+                                            if(reply) sendMessage(msg.sender_id, reply);
+                                        }}
+                                        className="mt-3 text-[9px] font-black uppercase text-blue-500 hover:text-white"
+                                    >
+                                        Ответить
+                                    </button>
+                                )}
                             </div>
-                        ))}
+                        )) : (
+                          <div className="text-center py-10 text-zinc-700">
+                            <Inbox size={32} className="mx-auto mb-2 opacity-20"/>
+                            <p className="text-[9px] font-black uppercase">Нет сообщений</p>
+                          </div>
+                        )}
                     </div>
                 </div>
-             )}
+             </div>
           </div>
         ) : (
           /* ================= MAIN GALLERY ================= */
@@ -281,9 +383,7 @@ export default function App() {
         )}
       </main>
 
-      {/* MODALS (Авторизация, загрузка и т.д.) */}
-      {/* (Код модалок оставлен из твоей версии, так как они работают корректно) */}
-      
+      {/* MODALS */}
       {isAuthModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 p-4 backdrop-blur-md">
           <div className="bg-[#0a0a0a] w-full max-w-md p-10 rounded-[3rem] border border-white/10">
@@ -314,8 +414,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ОСТАЛЬНЫЕ МОДАЛКИ (Загрузка кейса, Тендер, Отклик) */}
-      {/* ... (они остаются как в твоем исходном коде) ... */}
       {isTenderOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 p-4 overflow-y-auto">
           <div className="bg-[#0a0a0a] w-full max-w-2xl p-10 rounded-[3.5rem] border border-white/5 my-10">
@@ -333,8 +431,8 @@ export default function App() {
                 {uploadStatus.edited ? <CheckCircle2 className="text-green-500" /> : <Upload className="text-zinc-600 group-hover:text-white" />}
                 <span className="text-[10px] font-black mt-2 uppercase tracking-widest">VFX VIDEO</span>
               </label>
-              <input type="text" placeholder="Цена ассетов (напр. $100)" onChange={e => setFormData({ ...formData, asset_price: e.target.value })} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none text-blue-500 font-black" />
-              <input type="text" placeholder="Время работы (напр. 2 дня)" onChange={e => setFormData({ ...formData, production_time: e.target.value })} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
+              <input type="text" placeholder="Цена ассетов" onChange={e => setFormData({ ...formData, asset_price: e.target.value })} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none text-blue-500 font-black" />
+              <input type="text" placeholder="Время работы" onChange={e => setFormData({ ...formData, production_time: e.target.value })} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
               <button onClick={async () => {
                 setLoading(true);
                 const { error } = await supabase.from('tenders').insert([{ ...formData, user_id: user.id }]);
@@ -347,7 +445,42 @@ export default function App() {
         </div>
       )}
 
-      {/* (Аналогично добавь модалки BRAND MODAL и APPLY MODAL из твоего кода) */}
+      {isBrandModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+          <div className="bg-[#0a0a0a] w-full max-w-lg p-10 rounded-[3rem] border border-white/10">
+            <h2 className="text-xl font-black italic uppercase mb-8 text-red-600">Разместить заказ</h2>
+            <div className="space-y-4">
+              <input type="text" placeholder="НАЗВАНИЕ БРЕНДА" onChange={e => setBrandForm({...brandForm, brand_name: e.target.value})} className="w-full bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
+              <textarea placeholder="ОПИСАНИЕ ЗАДАЧИ" onChange={e => setBrandForm({...brandForm, task_description: e.target.value})} className="w-full bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold min-h-[120px]" />
+              <div className="grid grid-cols-2 gap-4">
+                <input type="text" placeholder="БЮДЖЕТ" onChange={e => setBrandForm({...brandForm, budget: e.target.value})} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold text-green-500" />
+                <input type="text" placeholder="ДЕДЛАЙН" onChange={e => setBrandForm({...brandForm, deadline: e.target.value})} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
+              </div>
+              <button onClick={async () => {
+                setLoading(true);
+                const { error } = await supabase.from('brand_tenders').insert([{ ...brandForm, user_id: user.id }]);
+                if(!error) { setIsBrandModalOpen(false); fetchData(); }
+                setLoading(false);
+              }} className="w-full bg-red-600 py-5 rounded-2xl font-black uppercase">Опубликовать тендер</button>
+              <button onClick={() => setIsBrandModalOpen(false)} className="w-full text-[10px] text-zinc-800 uppercase font-black">Отмена</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isApplyModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+          <div className="bg-[#0a0a0a] w-full max-w-lg p-10 rounded-[3rem] border border-white/10">
+            <h2 className="text-xl font-black italic uppercase mb-6">Откликнуться</h2>
+            <form onSubmit={handleApplyToTender} className="space-y-4">
+              <input type="text" placeholder="ВАШЕ ИМЯ" required onChange={e => setApplyForm({...applyForm, editor_name: e.target.value})} className="w-full bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
+              <textarea placeholder="СООБЩЕНИЕ БРЕНДУ (опыт, сроки)" required onChange={e => setApplyForm({...applyForm, message: e.target.value})} className="w-full bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold min-h-[100px]" />
+              <button type="submit" disabled={loading} className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase">{loading ? '...' : 'Отправить отклик'}</button>
+              <button type="button" onClick={() => setIsApplyModalOpen(false)} className="w-full text-[10px] text-zinc-800 uppercase font-black">Отмена</button>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
