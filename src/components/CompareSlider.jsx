@@ -1,24 +1,61 @@
-import React from 'react';
-import { ReactCompareSlider, ReactCompareSliderImage } from 'react-compare-slider';
+import React, { useEffect, useRef } from 'react';
+import { ReactCompareSlider, ReactCompareSliderHandle } from 'react-compare-slider';
 
-export default function CompareSlider({ before, after }) {
-  // Эти ссылки сработают, если в базе данных пусто (NULL)
-  const defaultBefore = "https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&q=80&w=2070";
-  const defaultAfter = "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=2070";
+export default function CompareSlider({ rawVideo, editedVideo }) {
+  const video1Ref = useRef(null);
+  const video2Ref = useRef(null);
+
+  // Принудительный запуск при смене видео
+  useEffect(() => {
+    if (video1Ref.current) video1Ref.current.load();
+    if (video2Ref.current) video2Ref.current.load();
+  }, [rawVideo, editedVideo]);
 
   return (
-    <div className="w-full h-full min-h-[400px] relative group">
+    <div className="w-full h-full bg-black">
       <ReactCompareSlider
-        itemOne={<ReactCompareSliderImage src={before || defaultBefore} alt="Raw Footage" />}
-        itemTwo={<ReactCompareSliderImage src={after || defaultAfter} alt="Final VFX" />}
-        className="h-full rounded-2xl overflow-hidden shadow-inner bg-zinc-800"
+        itemOne={
+          <video
+            ref={video1Ref}
+            src={rawVideo}
+            autoPlay
+            muted
+            loop
+            playsInline
+            crossOrigin="anonymous"
+            className="w-full h-full object-cover"
+          />
+        }
+        itemTwo={
+          <video
+            ref={video2Ref}
+            src={editedVideo}
+            autoPlay
+            muted
+            loop
+            playsInline
+            crossOrigin="anonymous"
+            className="w-full h-full object-cover"
+          />
+        }
+        handle={
+          <ReactCompareSliderHandle
+            buttonStyle={{
+              backdropFilter: 'blur(10px)',
+              background: 'rgba(255, 255, 255, 0.9)',
+              border: 0,
+              color: '#333',
+              width: '40px',
+              height: '40px'
+            }}
+            linesStyle={{ opacity: 0.5, width: 2 }}
+          />
+        }
+        style={{
+          width: '100%',
+          height: '100%',
+        }}
       />
-      <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white border border-white/10 pointer-events-none z-10">
-        Raw Footage
-      </div>
-      <div className="absolute top-4 right-4 bg-blue-600/80 backdrop-blur-md px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white border border-blue-400/20 pointer-events-none z-10 shadow-lg">
-        Final VFX
-      </div>
     </div>
   );
 }
