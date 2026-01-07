@@ -1,20 +1,18 @@
 import { useState } from 'react';
-import { supabase } from '../supabaseClient';
-import CompareSlider from './CompareSlider';
+import { supabase } from './supabaseClient'; // Убедись, что путь верный
+import CompareSlider from './components/CompareSlider';
 
-export default function TenderModal({ isOpen, onClose }) {
+export default function TenderModal({ isOpen, onClose, userId, onRefresh }) {
   const [loading, setLoading] = useState(false);
 
-  // Начальное состояние с твоими тестовыми видео
   const [formData, setFormData] = useState({
     title: '',
-    budget: '',
-    deadline: '',
-    tags: '',
-    brand: '',
-    productionTime: '',
-    videoRawUrl: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/raw_sample.mp4',
-    videoEditedUrl: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/edited_sample.mp4'
+    asset_price: '', // Было budget
+    production_time: '',
+    style_tags: '', // Было tags
+    brand_name: '', // Было brand
+    video_raw_url: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/raw_sample.mp4',
+    video_edited_url: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/edited_sample.mp4'
   });
 
   if (!isOpen) return null;
@@ -29,41 +27,33 @@ export default function TenderModal({ isOpen, onClose }) {
         .insert([
           {
             title: formData.title,
-            budget: formData.budget,
-            deadline: formData.deadline,
-            brand: formData.brand,
-            production_time: formData.productionTime,
-            video_raw_url: formData.videoRawUrl,
-            video_edited_url: formData.videoEditedUrl,
-            tags: formData.tags,
-            status: 'open'
+            asset_price: formData.asset_price,
+            brand_name: formData.brand_name,
+            production_time: formData.production_time,
+            video_raw_url: formData.video_raw_url,
+            video_edited_url: formData.video_edited_url,
+            style_tags: formData.style_tags,
+            user_id: userId // Добавляем ID автора!
           }
         ]);
 
       if (error) throw error;
 
-      // --- ВОТ ТУТ МАГИЯ ОЧИСТКИ ---
-
-      // 1. Очищаем поля формы в памяти React
       setFormData({
         title: '',
-        budget: '',
-        deadline: '',
-        tags: '',
-        brand: '',
-        productionTime: '',
-        videoRawUrl: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/raw_sample.mp4',
-        videoEditedUrl: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/edited_sample.mp4'
+        asset_price: '',
+        production_time: '',
+        style_tags: '',
+        brand_name: '',
+        video_raw_url: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/raw_sample.mp4',
+        video_edited_url: 'https://pggvfqmuepnuqofpsvto.supabase.co/storage/v1/object/public/videos/edited_sample.mp4'
       });
 
-      // 2. Закрываем модальное окно
       onClose();
-
-      // 3. Сообщаем пользователю (можно заменить на красивый тост/нотификацию)
+      if (onRefresh) onRefresh(); // Обновляем список в Dashboard сразу
       alert('Project Passport Deployed Successfully!');
 
     } catch (error) {
-      console.error('Error:', error.message);
       alert('Failed to deploy: ' + error.message);
     } finally {
       setLoading(false);
@@ -72,17 +62,17 @@ export default function TenderModal({ isOpen, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4 backdrop-blur-md">
-      <div className="bg-[#0A0A0A] border border-white/10 rounded-3xl w-full max-w-6xl flex flex-col md:flex-row overflow-hidden shadow-2xl h-[85vh]">
+      <div className="bg-[#0A0A0A] border border-white/10 rounded-[3rem] w-full max-w-6xl flex flex-col md:flex-row overflow-hidden shadow-2xl h-[85vh]">
 
-        {/* ЛЕВАЯ СТОРОНА: Плеер (обновляется на лету) */}
+        {/* Плеер */}
         <div className="flex-1 bg-black relative border-b md:border-b-0 md:border-r border-white/10">
           <CompareSlider
-            rawVideo={formData.videoRawUrl}
-            editedVideo={formData.videoEditedUrl}
+            rawVideo={formData.video_raw_url}
+            editedVideo={formData.video_edited_url}
           />
         </div>
 
-        {/* ПРАВАЯ СТОРОНА: Форма */}
+        {/* Форма */}
         <form onSubmit={handleSubmit} className="w-full md:w-[400px] p-8 bg-[#0D0D0D] flex flex-col overflow-y-auto">
           <div className="flex-1 space-y-6">
             <div>
@@ -95,12 +85,12 @@ export default function TenderModal({ isOpen, onClose }) {
                 <input
                   className="bg-white/5 border border-white/10 p-3 rounded-xl text-white text-sm outline-none focus:border-blue-500"
                   placeholder="Brand (e.g. Nike)"
-                  onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, brand_name: e.target.value })}
                 />
                 <input
                   className="bg-white/5 border border-white/10 p-3 rounded-xl text-white text-sm outline-none focus:border-blue-500"
-                  placeholder="Budget ($)"
-                  onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
+                  placeholder="Asset Price ($)"
+                  onChange={(e) => setFormData({ ...formData, asset_price: e.target.value })}
                 />
               </div>
 
@@ -115,8 +105,8 @@ export default function TenderModal({ isOpen, onClose }) {
                 <label className="text-[10px] uppercase text-blue-400 font-bold ml-1">Raw Footage URL</label>
                 <input
                   className="w-full bg-blue-500/5 border border-blue-500/20 p-3 rounded-xl text-white text-sm outline-none focus:border-blue-500"
-                  value={formData.videoRawUrl}
-                  onChange={(e) => setFormData({ ...formData, videoRawUrl: e.target.value })}
+                  value={formData.video_raw_url}
+                  onChange={(e) => setFormData({ ...formData, video_raw_url: e.target.value })}
                 />
               </div>
 
@@ -124,8 +114,8 @@ export default function TenderModal({ isOpen, onClose }) {
                 <label className="text-[10px] uppercase text-green-400 font-bold ml-1">Edited Video URL</label>
                 <input
                   className="w-full bg-green-500/5 border border-green-500/20 p-3 rounded-xl text-white text-sm outline-none focus:border-green-500"
-                  value={formData.videoEditedUrl}
-                  onChange={(e) => setFormData({ ...formData, videoEditedUrl: e.target.value })}
+                  value={formData.video_edited_url}
+                  onChange={(e) => setFormData({ ...formData, video_edited_url: e.target.value })}
                 />
               </div>
             </div>

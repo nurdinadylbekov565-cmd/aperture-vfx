@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Aperture, ShoppingCart, Send, Trash2, Upload, 
   CheckCircle2, Play, Briefcase, Clock, 
-  Zap, Tag, Cpu, LogOut, LayoutDashboard, Menu, X, MessageCircle, DollarSign, ChevronRight, UserCircle, Target, Inbox
+  Zap, Tag, Cpu, LogOut, LayoutDashboard, Menu, X, MessageCircle, DollarSign, ChevronRight, UserCircle, Target, Inbox, ExternalLink, Link as LinkIcon, ArrowLeft, Share2, Check, CheckCheck, Star
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import CompareSlider from './components/CompareSlider';
@@ -31,24 +31,44 @@ export default function App() {
   const [isTenderOpen, setIsTenderOpen] = useState(false);
   const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
+  const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState({ raw: false, edited: false });
+  const [selectedApplication, setSelectedApplication] = useState(null);
+  const [rating, setRating] = useState(5);
+  const [uploadStatus, setUploadStatus] = useState({ raw: false, edited: false, reference: false });
 
   const [formData, setFormData] = useState({ brand_name: '', title: '', video_raw_url: '', video_edited_url: '', asset_price: '', production_time: '', complexity: 'Medium', software: 'After Effects', style_tags: '' });
-  const [brandForm, setBrandForm] = useState({ brand_name: '', task_description: '', budget: '', deadline: '' });
+  const [brandForm, setBrandForm] = useState({ brand_name: '', task_description: '', budget: '', deadline: '', reference_video_url: '' });
   const [applyForm, setApplyForm] = useState({ editor_name: '', message: '' });
 
-  // Проверка на наличие непрочитанных сообщений (где пользователь - получатель)
+  const [publicProfile, setPublicProfile] = useState(null);
+  const [publicWorks, setPublicWorks] = useState([]);
+
   const hasUnread = messages.some(m => m.receiver_id === user?.id && !m.is_read);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectId = params.get('p');
-    if (projectId && tenders.length > 0) {
+    const editorId = params.get('editor');
+    if (editorId) {
+      fetchPublicProfile(editorId);
+    } else if (projectId && tenders.length > 0) {
       const found = tenders.find(t => t.id === projectId);
       if (found) setActive(found);
     }
   }, [tenders]);
+
+  const fetchPublicProfile = async (id) => {
+    const { data: prof } = await supabase.from('profiles').select('*, reviews:reviews(rating)').eq('id', id).single();
+    if (prof) {
+      const avgRating = prof.reviews?.length > 0 
+        ? (prof.reviews.reduce((acc, curr) => acc + curr.rating, 0) / prof.reviews.length).toFixed(1)
+        : 'Новый';
+      setPublicProfile({ ...prof, avgRating, totalReviews: prof.reviews?.length || 0 });
+      const { data: works } = await supabase.from('tenders').select('*').eq('user_id', id);
+      setPublicWorks(works || []);
+    }
+  };
 
   const handleSetActive = (project) => {
     setActive(project);
@@ -70,9 +90,12 @@ export default function App() {
   }, []);
 
   const fetchProfile = async (userId) => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+    const { data } = await supabase.from('profiles').select('*, reviews:reviews(rating)').eq('id', userId).maybeSingle();
     if (data) { 
-      setProfile(data); 
+      const avgRating = data.reviews?.length > 0 
+        ? (data.reviews.reduce((acc, curr) => acc + curr.rating, 0) / data.reviews.length).toFixed(1)
+        : '0';
+      setProfile({ ...data, avgRating, totalReviews: data.reviews?.length || 0 }); 
       setAuthTelegram(data.telegram || '');
       setUserRole(data.role || 'editor');
     }
@@ -88,19 +111,15 @@ export default function App() {
   const fetchData = async () => {
     const { data: works } = await supabase.from('tenders').select('*').order('created_at', { ascending: false });
     if (works) { setTenders(works); if (works.length > 0 && !active) setActive(works[0]); }
-    
     const { data: tasks } = await supabase.from('brand_tenders').select('*').order('created_at', { ascending: false });
     if (tasks) setBrandTenders(tasks);
-    
     const { data: apps } = await supabase.from('tender_applications').select('*').order('created_at', { ascending: false });
     if (apps) setApplications(apps);
-
     if (user) {
       const { data: uWorks } = await supabase.from('tenders').select('*').eq('user_id', user.id);
       setUserWorks(uWorks || []);
       const { data: uTenders } = await supabase.from('brand_tenders').select('*').eq('user_id', user.id);
       setUserTenders(uTenders || []);
-      
       const { data: msgs } = await supabase
         .from('messages')
         .select('*')
@@ -112,9 +131,9 @@ export default function App() {
 
   useEffect(() => { 
     fetchData(); 
-    // Настраиваем Realtime подписку для мгновенных уведомлений
     const channel = supabase.channel('schema-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, () => user && fetchProfile(user.id))
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [user]);
@@ -130,7 +149,6 @@ export default function App() {
     } catch (e) { alert("Ошибка отправки"); }
   };
 
-  // Пометка сообщений как прочитанных при открытии Dashboard
   useEffect(() => {
     if (isDashboardOpen && user) {
       const markAsRead = async () => {
@@ -153,8 +171,13 @@ export default function App() {
       const { error } = await supabase.storage.from('videos').upload(fileName, file);
       if (error) throw error;
       const { data } = supabase.storage.from('videos').getPublicUrl(fileName);
-      setFormData(prev => ({ ...prev, [type === 'raw' ? 'video_raw_url' : 'video_edited_url']: data.publicUrl }));
-      setUploadStatus(prev => ({ ...prev, [type]: true }));
+      if (type === 'reference') {
+        setBrandForm(prev => ({ ...prev, reference_video_url: data.publicUrl }));
+        setUploadStatus(prev => ({ ...prev, reference: true }));
+      } else {
+        setFormData(prev => ({ ...prev, [type === 'raw' ? 'video_raw_url' : 'video_edited_url']: data.publicUrl }));
+        setUploadStatus(prev => ({ ...prev, [type]: true }));
+      }
     } catch (e) { alert("Ошибка загрузки"); } finally { setLoading(false); }
   };
 
@@ -162,6 +185,12 @@ export default function App() {
     const nick = tg?.replace('@', '').trim();
     if (nick) window.open(`https://t.me/${nick}`, '_blank');
     else alert("Контакт не указан");
+  };
+
+  const copyPortfolioLink = () => {
+    const link = `${window.location.origin}${window.location.pathname}?editor=${user.id}`;
+    navigator.clipboard.writeText(link);
+    alert("Ссылка скопирована!");
   };
 
   const handleApplyToTender = async (e) => {
@@ -178,6 +207,53 @@ export default function App() {
     } catch (err) { alert("Ошибка при отклике"); } finally { setLoading(false); }
   };
 
+  const submitRating = async () => {
+    if (!selectedApplication) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('reviews').insert([
+        { editor_id: selectedApplication.user_id, brand_id: user.id, rating: rating, tender_id: selectedApplication.tender_id }
+      ]);
+      if (error) throw error;
+      setIsRatingModalOpen(false);
+      alert("Оценка сохранена!");
+    } catch (e) { alert("Ошибка при оценке"); } finally { setLoading(false); }
+  };
+
+  if (publicProfile) {
+    return (
+      <div className="min-h-screen bg-black text-white p-6 md:p-12 animate-in fade-in duration-700">
+        <button onClick={() => { setPublicProfile(null); window.history.pushState({}, '', '/'); }} className="flex items-center gap-2 text-zinc-500 hover:text-white mb-12 font-black uppercase text-[10px] tracking-widest transition-colors"><ArrowLeft size={14}/> Назад в галерею</button>
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 mb-20">
+            <div>
+              <div className="flex items-center gap-4 mb-4">
+                <div className="w-16 h-16 bg-blue-600 rounded-3xl flex items-center justify-center font-black text-2xl italic">{(publicProfile.username || 'E').charAt(0).toUpperCase()}</div>
+                <div className="flex flex-col gap-1">
+                  <div className="bg-blue-600/10 text-blue-600 px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit">Verified Artist</div>
+                  <div className="flex items-center gap-1 text-yellow-500 font-black text-xs px-1"><Star size={12} fill="currentColor"/> {publicProfile.avgRating} <span className="text-zinc-600 ml-1">({publicProfile.totalReviews})</span></div>
+                </div>
+              </div>
+              <h1 className="text-6xl md:text-8xl font-black uppercase italic tracking-tighter leading-none">{publicProfile.username || 'Editor'}</h1>
+            </div>
+            <button onClick={() => openTelegram(publicProfile.telegram)} className="bg-white text-black px-10 py-5 rounded-[2rem] font-black uppercase text-xs hover:bg-blue-600 hover:text-white transition-all shadow-xl shadow-white/5">Hire this Editor</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {publicWorks.map(work => (
+              <div key={work.id} className="group relative bg-zinc-900 rounded-[3rem] overflow-hidden border border-white/5 aspect-video cursor-pointer" onClick={() => { setPublicProfile(null); handleSetActive(work); }}>
+                <video src={work.video_edited_url} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-all" muted onMouseEnter={e => e.target.play()} onMouseLeave={e => {e.target.pause(); e.target.currentTime = 0;}} />
+                <div className="absolute bottom-8 left-8">
+                  <div className="text-[10px] text-blue-500 font-bold uppercase mb-1">{work.brand_name}</div>
+                  <div className="text-2xl font-black italic uppercase">{work.title}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-blue-600 overflow-x-hidden">
       
@@ -187,20 +263,11 @@ export default function App() {
           <Aperture size={32} className="text-blue-600" />
           <span className="text-2xl font-black uppercase italic tracking-tighter">Aperture</span>
         </div>
-
         <div className="flex gap-4 items-center">
           {user ? (
             <div className="relative">
-              <button 
-                onClick={() => setIsDashboardOpen(!isDashboardOpen)} 
-                className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all flex items-center gap-2 group relative z-10
-                  ${hasUnread 
-                    ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.5)] border-blue-400' 
-                    : 'bg-white text-black hover:bg-blue-600 hover:text-white'}`}
-              >
+              <button onClick={() => setIsDashboardOpen(!isDashboardOpen)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all flex items-center gap-2 group relative z-10 ${hasUnread ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.5)] border-blue-400' : 'bg-white text-black hover:bg-blue-600 hover:text-white'}`}>
                 <LayoutDashboard size={14}/> {isDashboardOpen ? 'В Галерею' : 'Моя Студия'}
-                
-                {/* Красная точка индикатор */}
                 {hasUnread && (
                   <span className="absolute -top-1 -right-1 flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -216,33 +283,36 @@ export default function App() {
       </header>
 
       <main className="max-w-[1600px] mx-auto px-6 py-10">
-        
         {isDashboardOpen ? (
           <div className="space-y-10 animate-in fade-in duration-500">
-             
-             {/* Переключатель ролей */}
              <div className="flex flex-col md:flex-row justify-between items-center bg-zinc-900/40 p-2 rounded-[2.5rem] border border-white/5 max-w-xl mx-auto mb-10">
-                <button 
-                    onClick={() => updateProfileRole('editor')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[2rem] font-black uppercase text-[10px] transition-all ${userRole === 'editor' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-zinc-500 hover:text-white'}`}
-                >
+                <button onClick={() => updateProfileRole('editor')} className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[2rem] font-black uppercase text-[10px] transition-all ${userRole === 'editor' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-zinc-500 hover:text-white'}`}>
                     <UserCircle size={16}/> Я Эдитор
                 </button>
-                <button 
-                    onClick={() => updateProfileRole('brand')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[2rem] font-black uppercase text-[10px] transition-all ${userRole === 'brand' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-zinc-500 hover:text-white'}`}
-                >
+                <button onClick={() => updateProfileRole('brand')} className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[2rem] font-black uppercase text-[10px] transition-all ${userRole === 'brand' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-zinc-500 hover:text-white'}`}>
                     <Target size={16}/> Я Бренд
                 </button>
              </div>
-
              <div className="flex justify-between items-end mb-6">
-                <h2 className="text-5xl font-black uppercase italic tracking-tighter">Studio <span className={userRole === 'editor' ? 'text-blue-600' : 'text-red-600'}>{userRole}</span></h2>
+                <div className="flex items-end gap-6">
+                  <div>
+                    <h2 className="text-5xl font-black uppercase italic tracking-tighter">Studio <span className={userRole === 'editor' ? 'text-blue-600' : 'text-red-600'}>{userRole}</span></h2>
+                    {userRole === 'editor' && (
+                      <button onClick={copyPortfolioLink} className="mt-2 text-[10px] font-black uppercase text-zinc-500 flex items-center gap-2 hover:text-blue-500 transition-colors">
+                        <Share2 size={12}/> Скопировать ссылку на портфолио
+                      </button>
+                    )}
+                  </div>
+                  {userRole === 'editor' && (
+                    <div className="mb-2 bg-zinc-900 px-4 py-2 rounded-2xl border border-white/5">
+                        <div className="text-[8px] font-black text-zinc-500 uppercase mb-1">Рейтинг</div>
+                        <div className="flex items-center gap-2 text-yellow-500 font-black italic"><Star size={14} fill="currentColor"/> {profile?.avgRating}</div>
+                    </div>
+                  )}
+                </div>
                 <button onClick={() => supabase.auth.signOut()} className="text-[9px] font-black uppercase border border-white/10 px-4 py-2 rounded-lg text-zinc-600 hover:text-red-500 transition-colors">Выйти</button>
              </div>
-
              <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-                {/* ЛЕВАЯ КОЛОНКА */}
                 <div className="lg:col-span-2 space-y-10">
                   {userRole === 'editor' ? (
                       <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5">
@@ -266,12 +336,18 @@ export default function App() {
                                   <div key={t.id} className="bg-black/60 p-6 rounded-3xl border border-white/10">
                                       <div className="flex justify-between items-center mb-4 text-red-500 font-black italic uppercase tracking-tighter">{t.brand_name} <span>{t.budget}</span></div>
                                       <p className="text-xs text-zinc-500 mb-4 italic line-clamp-2">"{t.task_description}"</p>
+                                      {t.reference_video_url && (
+                                          <button onClick={() => window.open(t.reference_video_url, '_blank')} className="mb-4 text-[9px] font-black uppercase text-zinc-400 flex items-center gap-1 hover:text-white transition-colors"><ExternalLink size={10}/> Ссылка на референс</button>
+                                      )}
                                       <div className="space-y-2 pt-4 border-t border-white/5">
                                           <p className="text-[8px] font-black text-zinc-600 uppercase">Отклики:</p>
                                           {applications.filter(a => a.tender_id === t.id).map(app => (
                                               <div key={app.id} className="bg-zinc-900 p-4 rounded-xl flex justify-between items-center">
                                                   <div className="text-[10px] font-black uppercase">{app.editor_name}</div>
-                                                  <button onClick={() => openTelegram(app.portfolio_link)} className="bg-blue-600 px-3 py-1.5 rounded-lg text-[9px] font-black">TG</button>
+                                                  <div className="flex gap-2">
+                                                    <button onClick={() => { setSelectedApplication(app); setIsRatingModalOpen(true); }} className="bg-green-600 px-3 py-1.5 rounded-lg text-[9px] font-black">ПРИНЯТЬ</button>
+                                                    <button onClick={() => openTelegram(app.portfolio_link)} className="bg-blue-600 px-3 py-1.5 rounded-lg text-[9px] font-black">TG</button>
+                                                  </div>
                                               </div>
                                           ))}
                                       </div>
@@ -281,32 +357,29 @@ export default function App() {
                       </div>
                   )}
                 </div>
-
-                {/* ПРАВАЯ КОЛОНКА (Messenger) */}
                 <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5 h-fit">
                     <h3 className="text-xl font-black uppercase italic mb-6 flex items-center gap-2 border-l-4 border-white pl-4">
                       <MessageCircle size={18}/> Inbox
                     </h3>
                     <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                         {messages.length > 0 ? messages.map(msg => (
-                            <div key={msg.id} className={`p-4 rounded-2xl border ${msg.sender_id === user.id ? 'bg-blue-600/10 border-blue-600/20 ml-6' : 'bg-white/10 border-blue-600/30 mr-6'} ${!msg.is_read && msg.receiver_id === user.id ? 'ring-1 ring-blue-500' : ''}`}>
+                            <div key={msg.id} className={`p-4 rounded-2xl border ${msg.sender_id === user.id ? 'bg-blue-600/10 border-blue-600/20 ml-6' : 'bg-white/10 border-blue-600/30 mr-6'} ${!msg.is_read && msg.receiver_id === user.id ? 'ring-1 ring-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.2)]' : ''}`}>
                                 <div className="flex justify-between items-center mb-2">
                                     <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">
                                         {msg.sender_id === user.id ? 'ВЫ' : 'СОБЕСЕДНИК'}
                                     </span>
-                                    <span className="text-[8px] text-zinc-700">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[8px] text-zinc-700">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                      {msg.sender_id === user.id && (
+                                        <div className="flex items-center">
+                                          {msg.is_read ? <CheckCheck size={12} className="text-blue-500" /> : <Check size={12} className="text-zinc-700" />}
+                                        </div>
+                                      )}
+                                    </div>
                                 </div>
                                 <p className="text-[11px] leading-relaxed text-zinc-300">{msg.content}</p>
                                 {msg.sender_id !== user.id && (
-                                    <button 
-                                        onClick={() => {
-                                            const reply = prompt("Ваш ответ:");
-                                            if(reply) sendMessage(msg.sender_id, reply);
-                                        }}
-                                        className="mt-3 text-[9px] font-black uppercase text-blue-500 hover:text-white"
-                                    >
-                                        Ответить
-                                    </button>
+                                    <button onClick={() => { const reply = prompt("Ваш ответ:"); if(reply) sendMessage(msg.sender_id, reply); }} className="mt-3 text-[9px] font-black uppercase text-blue-500 hover:text-white">Ответить</button>
                                 )}
                             </div>
                         )) : (
@@ -335,7 +408,6 @@ export default function App() {
                     <div className="text-right"><div className="text-[9px] text-zinc-600 font-black uppercase tracking-widest mb-1">Asset Pack</div><div className="text-4xl font-black italic">{active?.asset_price || "FREE"}</div></div>
                  </div>
               </div>
-
               <div className="lg:w-1/3 space-y-6">
                 <div className="bg-zinc-900/30 rounded-[3rem] border border-white/5 p-8 md:p-10">
                     <h3 className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.3em] mb-8">Project Passport</h3>
@@ -350,7 +422,6 @@ export default function App() {
                         <button onClick={() => openTelegram(profile?.telegram)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs hover:bg-zinc-200 transition-all">Hire this Editor</button>
                     </div>
                 </div>
-
                 <div className="px-4">
                     <h4 className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mb-4 flex items-center gap-2">Showcase <ChevronRight size={12}/></h4>
                     <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar">
@@ -363,17 +434,21 @@ export default function App() {
                 </div>
               </div>
             </div>
-
             <section className="mt-20 border-t border-white/5 pt-20">
                 <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
                     <h2 className="text-7xl md:text-9xl font-black uppercase italic tracking-tighter leading-[0.8]">Open<br /><span className="text-blue-600">Tenders</span></h2>
-                    <p className="text-zinc-500 max-w-xs font-bold text-xs uppercase leading-relaxed">Площадка, где бренды находят лучших визуальных художников.</p>
+                    <p className="text-zinc-500 max-w-xs font-bold text-xs uppercase leading-relaxed">Площадка, где бренды находят лучших художников.</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     {brandTenders.map((task) => (
                     <div key={task.id} className="bg-zinc-900/20 p-10 rounded-[3rem] border border-white/5 hover:border-blue-600/40 transition-all group">
                         <div className="flex justify-between items-start mb-8 text-blue-500 font-black uppercase text-[10px] tracking-widest">{task.brand_name} <span className="text-green-500 font-black italic text-lg">{task.budget}</span></div>
-                        <h3 className="text-xl font-black uppercase italic mb-10 h-14 line-clamp-2">{task.task_description}</h3>
+                        <h3 className="text-xl font-black uppercase italic mb-6 h-14 line-clamp-2">{task.task_description}</h3>
+                        {task.reference_video_url && (
+                           <button onClick={() => window.open(task.reference_video_url, '_blank')} className="mb-6 flex items-center gap-2 text-[10px] font-black uppercase text-zinc-500 hover:text-white transition-colors">
+                              <Play size={12}/> Смотреть референс
+                           </button>
+                        )}
                         <button onClick={() => { setSelectedTask(task); user ? setIsApplyModalOpen(true) : setIsAuthModalOpen(true); }} className="w-full bg-white text-black py-5 rounded-2xl font-black uppercase text-[10px] group-hover:bg-blue-600 group-hover:text-white transition-all">Откликнуться</button>
                     </div>
                     ))}
@@ -384,6 +459,24 @@ export default function App() {
       </main>
 
       {/* MODALS */}
+      {isRatingModalOpen && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+          <div className="bg-[#0a0a0a] w-full max-w-sm p-10 rounded-[3rem] border border-white/10 text-center">
+            <h2 className="text-xl font-black italic uppercase mb-2">Оцените работу</h2>
+            <p className="text-[10px] text-zinc-500 uppercase mb-8">Эдитор: {selectedApplication?.editor_name}</p>
+            <div className="flex justify-center gap-2 mb-10">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button key={star} onClick={() => setRating(star)} className={`transition-all ${rating >= star ? 'text-yellow-500 scale-110' : 'text-zinc-800 hover:text-zinc-600'}`}>
+                  <Star size={32} fill={rating >= star ? 'currentColor' : 'none'} />
+                </button>
+              ))}
+            </div>
+            <button onClick={submitRating} className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase mb-4">Подтвердить</button>
+            <button onClick={() => setIsRatingModalOpen(false)} className="text-[10px] text-zinc-700 font-black uppercase">Отмена</button>
+          </div>
+        </div>
+      )}
+
       {isAuthModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 p-4 backdrop-blur-md">
           <div className="bg-[#0a0a0a] w-full max-w-md p-10 rounded-[3rem] border border-white/10">
@@ -452,6 +545,11 @@ export default function App() {
             <div className="space-y-4">
               <input type="text" placeholder="НАЗВАНИЕ БРЕНДА" onChange={e => setBrandForm({...brandForm, brand_name: e.target.value})} className="w-full bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
               <textarea placeholder="ОПИСАНИЕ ЗАДАЧИ" onChange={e => setBrandForm({...brandForm, task_description: e.target.value})} className="w-full bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold min-h-[120px]" />
+              <label className="flex items-center gap-4 p-5 bg-[#111] rounded-2xl border border-dashed border-white/10 cursor-pointer hover:border-red-600 transition-all">
+                <input type="file" className="hidden" onChange={e => handleFileUpload(e, 'reference')} />
+                {uploadStatus.reference ? <CheckCircle2 size={16} className="text-green-500" /> : <Upload size={16} className="text-zinc-600" />}
+                <span className="text-[10px] font-black uppercase tracking-widest">Прикрепить референс (видео)</span>
+              </label>
               <div className="grid grid-cols-2 gap-4">
                 <input type="text" placeholder="БЮДЖЕТ" onChange={e => setBrandForm({...brandForm, budget: e.target.value})} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold text-green-500" />
                 <input type="text" placeholder="ДЕДЛАЙН" onChange={e => setBrandForm({...brandForm, deadline: e.target.value})} className="bg-[#111] p-5 rounded-2xl border border-white/5 outline-none font-bold" />
