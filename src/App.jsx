@@ -130,10 +130,20 @@ export default function App() {
     if (!error) fetchData();
   };
 
+  // Проверка прав на удаление (Владелец или Админ)
+  const canDelete = (itemUserId) => {
+    if (!user) return false;
+    return user.id === itemUserId || profile?.role === 'admin';
+  };
+
   const deleteTender = async (id, table) => {
-    if (confirm("Вы уверены? Это действие нельзя отменить.")) {
+    if (window.confirm("Вы уверены? Это действие удалит запись навсегда.")) {
       const { error } = await supabase.from(table).delete().eq('id', id);
-      if (!error) fetchData();
+      if (error) {
+        alert("Ошибка доступа: вы не можете удалить этот объект.");
+      } else {
+        fetchData(); 
+      }
     }
   };
 
@@ -185,12 +195,12 @@ export default function App() {
         {isDashboardOpen ? (
           /* ================= DASHBOARD (MY STUDIO) ================= */
           <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="flex flex-col md:flex-row justify-between items-center bg-zinc-900/40 p-2 rounded-[2.5rem] border border-white/5 max-w-xl mx-auto mb-10">
+              <div className="flex flex-col md:flex-row justify-between items-center bg-zinc-900/40 p-2 rounded-[2.5rem] border border-white/5 max-w-xl mx-auto mb-10">
                 <button onClick={() => updateProfileRole('editor')} className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[2rem] font-black uppercase text-[10px] transition-all ${userRole === 'editor' ? 'bg-blue-600 text-white' : 'text-zinc-500'}`}><UserCircle size={16}/> Я Эдитор</button>
                 <button onClick={() => updateProfileRole('brand')} className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[2rem] font-black uppercase text-[10px] transition-all ${userRole === 'brand' ? 'bg-red-600 text-white' : 'text-zinc-500'}`}><Target size={16}/> Я Бренд</button>
-             </div>
+              </div>
 
-             <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
                 <div className="lg:col-span-2 space-y-10">
                   {userRole === 'editor' ? (
                     <div className="bg-zinc-900/40 p-8 rounded-[3rem] border border-white/5">
@@ -205,7 +215,9 @@ export default function App() {
                                         <div className="text-[9px] text-blue-500 font-bold uppercase">{w.brand_name}</div>
                                         <div className="font-black italic text-lg">{w.title}</div>
                                     </div>
-                                    <button onClick={() => deleteTender(w.id, 'tenders')} className="text-zinc-800 group-hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
+                                    {canDelete(w.user_id) && (
+                                      <button onClick={() => deleteTender(w.id, 'tenders')} className="text-zinc-800 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
+                                    )}
                                 </div>
                             )) : <div className="col-span-2 text-center py-20 border-2 border-dashed border-white/5 rounded-3xl text-zinc-700 font-black uppercase text-[10px]">Тут пока пусто</div>}
                         </div>
@@ -218,10 +230,12 @@ export default function App() {
                         </div>
                         <div className="grid grid-cols-1 gap-6">
                             {userTenders.length > 0 ? userTenders.map(t => (
-                                <div key={t.id} className="bg-black/60 p-6 rounded-3xl border border-white/10">
+                                <div key={t.id} className="bg-black/60 p-6 rounded-3xl border border-white/10 relative">
                                     <div className="flex justify-between items-center mb-4">
                                         <div className="text-red-500 font-black italic uppercase tracking-tighter">{t.brand_name} <span className="ml-2 text-white/40 text-xs">/ {t.budget}</span></div>
-                                        <button onClick={() => deleteTender(t.id, 'brand_tenders')} className="text-zinc-800 hover:text-red-500"><Trash2 size={16}/></button>
+                                        {canDelete(t.user_id) && (
+                                          <button onClick={() => deleteTender(t.id, 'brand_tenders')} className="text-zinc-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                                        )}
                                     </div>
                                     <p className="text-xs text-zinc-500 mb-6">"{t.task_description}"</p>
                                     <div className="space-y-2 pt-4 border-t border-white/5">
@@ -260,7 +274,7 @@ export default function App() {
                         )) : <div className="text-center py-10 text-zinc-800"><Inbox size={32} className="mx-auto mb-2 opacity-10"/><p className="text-[9px] font-black uppercase tracking-widest">Сообщений нет</p></div>}
                     </div>
                 </div>
-             </div>
+              </div>
           </div>
         ) : (
           /* ================= MAIN GALLERY ================= */
@@ -315,6 +329,9 @@ export default function App() {
                     <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar">
                         {tenders.map(t => (
                             <div key={t.id} onClick={() => setActive(t)} className={`min-w-[100px] aspect-square rounded-2xl border-2 transition-all cursor-pointer overflow-hidden relative group ${active?.id === t.id ? 'border-blue-600 scale-105' : 'border-white/5 opacity-40 hover:opacity-100'}`}>
+                                {canDelete(t.user_id) && (
+                                  <button onClick={(e) => { e.stopPropagation(); deleteTender(t.id, 'tenders'); }} className="absolute top-1 right-1 z-50 bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={10}/></button>
+                                )}
                                 <video src={t.video_edited_url} className="w-full h-full object-cover" muted onMouseEnter={e => e.target.play()} onMouseLeave={e => {e.target.pause(); e.target.currentTime = 0;}} />
                             </div>
                         ))}
@@ -331,7 +348,10 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     {brandTenders.map((task) => (
-                    <div key={task.id} className="bg-zinc-900/20 p-10 rounded-[3rem] border border-white/5 hover:border-blue-600/40 transition-all group flex flex-col justify-between">
+                    <div key={task.id} className="bg-zinc-900/20 p-10 rounded-[3rem] border border-white/5 hover:border-blue-600/40 transition-all group flex flex-col justify-between relative">
+                        {canDelete(task.user_id) && (
+                          <button onClick={(e) => { e.stopPropagation(); deleteTender(task.id, 'brand_tenders'); }} className="absolute top-6 right-6 text-zinc-700 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
+                        )}
                         <div>
                             <div className="flex justify-between items-start mb-8 text-blue-500 font-black uppercase text-[10px] tracking-widest">{task.brand_name} <span className="text-green-500 font-black italic text-lg">{task.budget}</span></div>
                             <h3 className="text-xl font-black uppercase italic mb-10 h-14 line-clamp-2 leading-tight">"{task.task_description}"</h3>
